@@ -293,15 +293,14 @@ async def check_company(msg: Message):
         # Сохраняем в историю
         add_check_history(uid, inn, company_name, risk_level)
         
-        # Формируем отчет
+        # Формируем отчет (уже включает affiliates)
         report = format_risk_report(data)
         
-        # Добавляем связанные компании
+        # Получаем связанные компании только для PDF кеша
         mgr = data.get("management", {}).get("name", "")
         affs = []
         if mgr:
             affs = find_affiliated_companies(mgr, exclude_inn=inn)
-            report += format_affiliates_report(mgr, affs)
         
         # Кешируем данные для PDF (включая affiliates)
         cache_key = f"{uid}_{inn}"
