@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram Contragent Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/bot
+Environment=PATH=/opt/bot/venv/bin
+ExecStart=/opt/bot/venv/bin/python /opt/bot/main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import os
+import json
 from datetime import datetime
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, FSInputFile
 from dotenv import load_dotenv
 from dadata import Dadata
 from database import (
@@ -13,11 +14,15 @@ from database import (
 )
 from risk_analyzer import format_risk_report, analyze_risks
 from affiliates import find_affiliated_companies, format_affiliates_report
+from pdf_generator import generate_pdf_report
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=os.getenv("BOT_TOKEN"))
 dp = Dispatcher()
+
+# Хранилище данных для PDF (временное, по user_id)
+pdf_data_cache = {}
 
 
 # === Главное меню ===
@@ -213,6 +218,36 @@ async def cb_back(callback: CallbackQuery):
     )
 
 
+# === Обработчик PDF ===
+@dp.callback_query(lambda c: c.data.startswith("pdf_"))
+async def cb_download_pdf(callback: CallbackQuery):
+    await callback.answer("📄 Генерирую PDF...")
+    
+    inn = callback.data.replace("pdf_", "")
+    user_id = callback.from_user.id
+    
+    # Получаем закешированные данные
+    cache_key = f"{user_id}_{inn}"
+    if cache_key not in pdf_data_cache:
+        await callback.message.answer("❌ Данные устарели. Отправьте ИНН повторно.")
+        return
+    
+    data = pdf_data_cache[cache_key]
+    
+    try:
+        filepath = generate_pdf_report(data, user_id)
+        pdf_file = FSInputFile(filepath)
+        await callback.message.answer_document(
+            pdf_file,
+            caption=f"📄 Отчет о проверке ИНН {inn}"
+        )
+        # Удаляем файл после отправки
+        os.remove(filepath)
+    except Exception as e:
+        logging.error(f"PDF generation error: {e}")
+        await callback.message.answer(f"❌ Ошибка генерации PDF: {str(e)[:100]}")
+
+
 # === Проверка компании ===
 @dp.message(lambda m: m.text and m.text.isdigit() and len(m.text) in [10, 12])
 async def check_company(msg: Message):
@@ -246,14 +281,19 @@ async def check_company(msg: Message):
             return
         
         data = result[0]["data"]
+        inn = data.get("inn", msg.text)
         company_name = data.get("name", {}).get("short_with_opf", "Неизвестно")
+        
+        # Кешируем данные для PDF
+        cache_key = f"{uid}_{inn}"
+        pdf_data_cache[cache_key] = data
         
         # Анализ рисков
         risk_emoji, risk_text, factors = analyze_risks(data)
         risk_level = "high" if "Высокий" in risk_text else ("medium" if "Средний" in risk_text else "low")
         
         # Сохраняем в историю
-        add_check_history(uid, msg.text, company_name, risk_level)
+        add_check_history(uid, inn, company_name, risk_level)
         
         # Формируем отчет
         report = format_risk_report(data)
@@ -261,10 +301,15 @@ async def check_company(msg: Message):
         # Добавляем связанные компании
         mgr = data.get("management", {}).get("name", "")
         if mgr:
-            affs = find_affiliated_companies(mgr, exclude_inn=data.get("inn"))
+            affs = find_affiliated_companies(mgr, exclude_inn=inn)
             report += format_affiliates_report(mgr, affs)
         
-        await msg.answer(report, parse_mode="Markdown")
+        # Кнопка для PDF
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Скачать PDF-отчет", callback_data=f"pdf_{inn}")]
+        ])
+        
+        await msg.answer(report, parse_mode="Markdown", reply_markup=keyboard)
         
     except Exception as e:
         logging.error(f"Error checking company: {e}")
