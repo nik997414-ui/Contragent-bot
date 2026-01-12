@@ -87,14 +87,10 @@ def generate_pdf_report(data: Dict[str, Any], user_id: int, affiliates_list: Lis
     manager_name = data.get('management', {}).get('name', 'Не указан') if data.get('management') else 'Не указан'
     manager_post = data.get('management', {}).get('post', '') if data.get('management') else ''
     
-    # ОКВЭД с расшифровкой
+    # ОКВЭД с расшифровкой из локального справочника
+    from okved import get_okved_name
     okved_code = data.get('okved', 'Н/Д')
-    okved_name = data.get('okved_type', '')
-    if not okved_name:
-        # Пробуем получить из okveds
-        okveds = data.get('okveds', [])
-        if okveds and isinstance(okveds, list) and len(okveds) > 0:
-            okved_name = okveds[0].get('name', '')
+    okved_name = get_okved_name(okved_code)
     okved = f"{okved_code}" + (f" - {okved_name}" if okved_name else "")
     
     # Анализ рисков

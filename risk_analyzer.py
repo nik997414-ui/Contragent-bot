@@ -184,13 +184,10 @@ def format_risk_report(data: Dict[str, Any]) -> str:
     address = data.get('address', {}).get('value', 'Не указан') if isinstance(data.get('address'), dict) else 'Не указан'
     manager_name = data.get('management', {}).get('name', 'Не указан')
     
-    # ОКВЭД с расшифровкой
+    # ОКВЭД с расшифровкой из локального справочника
+    from okved import get_okved_name
     okved_code = data.get('okved', 'Н/Д')
-    okved_name = data.get('okved_type', '')
-    if not okved_name:
-        okveds = data.get('okveds', [])
-        if okveds and isinstance(okveds, list) and len(okveds) > 0:
-            okved_name = okveds[0].get('name', '')
+    okved_name = get_okved_name(okved_code)
     okved_full = f"{okved_code}" + (f" - {okved_name}" if okved_name else "")
     
     overall_emoji, overall_text, factors = analyze_risks(data)
