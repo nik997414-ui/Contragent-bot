@@ -1,0 +1,19 @@
+# Environment
+.env
+venv/
+__pycache__/
+*.pyc
+
+# Database
+bot.db
+
+# Reports
+reports/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
