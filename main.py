@@ -22,7 +22,7 @@ bot = Bot(token=os.getenv("BOT_TOKEN"))
 dp = Dispatcher()
 
 # Хранилище данных для PDF (временное, по user_id)
-pdf_data_cache = {}
+pdf_data_cache = {}  # {cache_key: {'data': data, 'affiliates': affs}}
 
 
 # === Главное меню ===
@@ -232,10 +232,12 @@ async def cb_download_pdf(callback: CallbackQuery):
         await callback.message.answer("❌ Данные устарели. Отправьте ИНН повторно.")
         return
     
-    data = pdf_data_cache[cache_key]
+    cached = pdf_data_cache[cache_key]
+    data = cached.get('data', cached)  # Обратная совместимость
+    affiliates = cached.get('affiliates', None)
     
     try:
-        filepath = generate_pdf_report(data, user_id)
+        filepath = generate_pdf_report(data, user_id, affiliates)
         pdf_file = FSInputFile(filepath)
         await callback.message.answer_document(
             pdf_file,
@@ -284,10 +286,6 @@ async def check_company(msg: Message):
         inn = data.get("inn", msg.text)
         company_name = data.get("name", {}).get("short_with_opf", "Неизвестно")
         
-        # Кешируем данные для PDF
-        cache_key = f"{uid}_{inn}"
-        pdf_data_cache[cache_key] = data
-        
         # Анализ рисков
         risk_emoji, risk_text, factors = analyze_risks(data)
         risk_level = "high" if "Высокий" in risk_text else ("medium" if "Средний" in risk_text else "low")
@@ -300,9 +298,14 @@ async def check_company(msg: Message):
         
         # Добавляем связанные компании
         mgr = data.get("management", {}).get("name", "")
+        affs = []
         if mgr:
             affs = find_affiliated_companies(mgr, exclude_inn=inn)
             report += format_affiliates_report(mgr, affs)
+        
+        # Кешируем данные для PDF (включая affiliates)
+        cache_key = f"{uid}_{inn}"
+        pdf_data_cache[cache_key] = {'data': data, 'affiliates': affs}
         
         # Кнопка для PDF
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
