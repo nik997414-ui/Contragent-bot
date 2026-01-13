@@ -15,6 +15,7 @@ from database import (
 from risk_analyzer import format_risk_report, analyze_risks
 from affiliates import find_affiliated_companies, format_affiliates_report
 from pdf_generator import generate_pdf_report
+from api_assist import check_company_extended, format_extended_report
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -235,9 +236,10 @@ async def cb_download_pdf(callback: CallbackQuery):
     cached = pdf_data_cache[cache_key]
     data = cached.get('data', cached)  # Обратная совместимость
     affiliates = cached.get('affiliates', None)
+    extended_data = cached.get('extended', None)
     
     try:
-        filepath = generate_pdf_report(data, user_id, affiliates)
+        filepath = generate_pdf_report(data, user_id, affiliates, extended_data)
         pdf_file = FSInputFile(filepath)
         await callback.message.answer_document(
             pdf_file,
@@ -302,9 +304,14 @@ async def check_company(msg: Message):
         if mgr:
             affs = find_affiliated_companies(mgr, exclude_inn=inn)
         
-        # Кешируем данные для PDF (включая affiliates)
+        # Расширенная проверка (ФССП, Арбитраж, ФНС)
+        extended_data = check_company_extended(inn, mgr)
+        extended_report = format_extended_report(extended_data)
+        report += extended_report
+        
+        # Кешируем данные для PDF (включая affiliates и extended)
         cache_key = f"{uid}_{inn}"
-        pdf_data_cache[cache_key] = {'data': data, 'affiliates': affs}
+        pdf_data_cache[cache_key] = {'data': data, 'affiliates': affs, 'extended': extended_data}
         
         # Кнопка для PDF
         keyboard = InlineKeyboardMarkup(inline_keyboard=[

@@ -51,7 +51,7 @@ def format_money(value) -> str:
         return "Данных нет"
 
 
-def generate_pdf_report(data: Dict[str, Any], user_id: int, affiliates_list: List[Dict] = None) -> str:
+def generate_pdf_report(data: Dict[str, Any], user_id: int, affiliates_list: List[Dict] = None, extended_data: Dict = None) -> str:
     """
     Генерирует PDF-отчет о компании.
     Возвращает путь к созданному файлу.
@@ -218,6 +218,89 @@ def generate_pdf_report(data: Dict[str, Any], user_id: int, affiliates_list: Lis
         elements.append(aff_table)
     else:
         elements.append(Paragraph("Связанных компаний не найдено", normal_style))
+    
+    # === ФССП (Исполнительные производства) ===
+    if extended_data and extended_data.get("fssp"):
+        fssp = extended_data["fssp"]
+        elements.append(Paragraph("<b>ИСПОЛНИТЕЛЬНЫЕ ПРОИЗВОДСТВА (ФССП)</b>", heading_style))
+        
+        if fssp.get("found") and fssp.get("total", 0) > 0:
+            total_sum = fssp.get("sum", 0)
+            if total_sum >= 1_000_000:
+                sum_str = f"{total_sum/1_000_000:.1f} млн ₽"
+            elif total_sum >= 1_000:
+                sum_str = f"{total_sum/1_000:.0f} тыс ₽"
+            else:
+                sum_str = f"{total_sum:.0f} ₽"
+            
+            elements.append(Paragraph(f"Найдено производств: {fssp.get('total', 0)}, общая сумма: {sum_str}", normal_style))
+            
+            # Таблица долгов
+            fssp_data = [["Предмет взыскания", "Сумма"]]
+            for item in fssp.get("items", [])[:5]:
+                subjects = item.get("subjects", [])
+                for subj in subjects[:1]:
+                    title = subj.get("title", "Задолженность")[:45]
+                    sum_val = subj.get("sum", "0")
+                    fssp_data.append([title, sum_val])
+            
+            if len(fssp_data) > 1:
+                fssp_table = Table(fssp_data, colWidths=[12*cm, 5*cm])
+                fssp_table.setStyle(TableStyle([
+                    ('FONTNAME', (0, 0), (-1, -1), font_name),
+                    ('FONTNAME', (0, 0), (-1, 0), font_bold),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ]))
+                elements.append(fssp_table)
+        else:
+            elements.append(Paragraph("Исполнительных производств не найдено", normal_style))
+    
+    # === АРБИТРАЖНЫЕ ДЕЛА ===
+    if extended_data and extended_data.get("arbitr"):
+        arbitr = extended_data["arbitr"]
+        elements.append(Paragraph("<b>АРБИТРАЖНЫЕ ДЕЛА</b>", heading_style))
+        
+        if arbitr.get("found") and arbitr.get("total", 0) > 0:
+            total = arbitr.get("total", 0)
+            plaintiff = arbitr.get("as_plaintiff", 0)
+            respondent = arbitr.get("as_respondent", 0)
+            bankruptcy = arbitr.get("bankruptcy", 0)
+            
+            summary = f"Всего дел: {total}"
+            if plaintiff > 0:
+                summary += f", истец: {plaintiff}"
+            if respondent > 0:
+                summary += f", ответчик: {respondent}"
+            if bankruptcy > 0:
+                summary += f", БАНКРОТСТВО: {bankruptcy}"
+            
+            elements.append(Paragraph(summary, normal_style))
+            
+            # Таблица дел
+            arb_data = [["Номер дела", "Суд", "Тип"]]
+            for case in arbitr.get("cases", [])[:5]:
+                number = case.get("CaseNumber", "")
+                court = case.get("Court", "")[:30]
+                case_type = case.get("CaseType", "")
+                type_name = {"А": "Админ.", "Б": "Банкрот.", "Г": "Гражд."}.get(case_type, case_type)
+                arb_data.append([number, court, type_name])
+            
+            if len(arb_data) > 1:
+                arb_table = Table(arb_data, colWidths=[5*cm, 9*cm, 3*cm])
+                arb_table.setStyle(TableStyle([
+                    ('FONTNAME', (0, 0), (-1, -1), font_name),
+                    ('FONTNAME', (0, 0), (-1, 0), font_bold),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ]))
+                elements.append(arb_table)
+        else:
+            elements.append(Paragraph("Арбитражных дел не найдено", normal_style))
     
     # === ПОДПИСЬ ===
     elements.append(Spacer(1, 30))
