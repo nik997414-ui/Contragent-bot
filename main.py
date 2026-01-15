@@ -14,7 +14,8 @@ from database import (
     init_db, try_consume_check, is_admin, get_or_create_user,
     add_check_history, get_check_history, get_user_stats,
     update_last_activity, get_all_active_users, get_clients_stats,
-    mark_user_blocked, log_broadcast
+    mark_user_blocked, log_broadcast, increment_api_usage, get_api_usage,
+    reset_api_usage, ADMIN_USERNAMES
 )
 from risk_analyzer import format_risk_report, analyze_risks
 from affiliates import find_affiliated_companies, format_affiliates_report
@@ -267,9 +268,76 @@ async def show_clients_stats(msg: Message):
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="📊 API баланс", callback_data="admin_api_stats")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
     ])
     await msg.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+
+
+@dp.message(Command("api_stats"))
+async def cmd_api_stats(msg: Message):
+    if not is_admin(msg.from_user.username):
+        return
+    await show_api_stats(msg)
+
+
+@dp.callback_query(lambda c: c.data == "admin_api_stats")
+async def cb_admin_api_stats(callback: CallbackQuery):
+    if not is_admin(callback.from_user.username):
+        await callback.answer("⛔ Только для администраторов", show_alert=True)
+        return
+    await callback.answer()
+    await show_api_stats(callback.message)
+
+
+async def show_api_stats(msg: Message):
+    usage = get_api_usage()
+    if not usage:
+        await msg.answer("❌ Нет данных об использовании API")
+        return
+    
+    # Определяем цвет статуса
+    remaining = usage['remaining']
+    if remaining <= usage['alert_threshold']:
+        status = "🔴 КРИТИЧЕСКИ МАЛО!"
+    elif remaining <= usage['alert_threshold'] * 5:
+        status = "🟡 Внимание"
+    else:
+        status = "🟢 Нормально"
+    
+    # Прогресс-бар
+    used_percent = usage['usage_percent']
+    bar_length = 10
+    filled = int(bar_length * used_percent / 100)
+    bar = "█" * filled + "░" * (bar_length - filled)
+    
+    text = (
+        f"📊 **Баланс API: За Честный Бизнес**\n\n"
+        f"**Статус:** {status}\n\n"
+        f"**Лимит:** {usage['total_limit']:,} запросов\n"
+        f"**Использовано:** {usage['used_count']:,} ({used_percent}%)\n"
+        f"**Осталось:** {remaining:,}\n\n"
+        f"[{bar}] {used_percent}%\n\n"
+        f"⚠️ **Порог оповещения:** {usage['alert_threshold']:,}\n"
+        f"📅 **Дата сброса:** {usage['reset_date'] or 'Не установлена'}"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Сбросить счётчик", callback_data="reset_api_usage")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_clients")]
+    ])
+    await msg.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+
+
+@dp.callback_query(lambda c: c.data == "reset_api_usage")
+async def cb_reset_api_usage(callback: CallbackQuery):
+    if not is_admin(callback.from_user.username):
+        await callback.answer("⛔ Только для администраторов", show_alert=True)
+        return
+    
+    reset_api_usage()
+    await callback.answer("✅ Счётчик сброшен!")
+    await show_api_stats(callback.message)
 
 
 @dp.message(Command("broadcast"))

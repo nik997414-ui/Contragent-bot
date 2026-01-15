@@ -11,14 +11,30 @@ from urllib.parse import quote
 API_ASSIST_KEY = os.getenv("API_ASSIST_KEY", "")
 BASE_URL = "https://service.api-assist.com/parser"
 
+# Флаг для отслеживания API (импортируем лениво чтобы избежать циклических импортов)
+_api_tracking_enabled = True
+
 
 def _make_request(endpoint: str, params: Dict[str, str]) -> Dict[str, Any]:
-    """Выполняет HTTP запрос к API."""
+    """Выполняет HTTP запрос к API и отслеживает использование."""
     params["key"] = API_ASSIST_KEY
     try:
         response = requests.get(f"{BASE_URL}/{endpoint}", params=params, timeout=30)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        
+        # Отслеживаем использование API
+        if _api_tracking_enabled:
+            try:
+                from database import increment_api_usage
+                usage_info = increment_api_usage("zachestnyibiznes")
+                # Если нужно отправить алерт, сохраняем в результате
+                if usage_info.get("should_alert"):
+                    result["_api_alert"] = usage_info
+            except Exception:
+                pass  # Не блокируем запрос если трекинг не работает
+        
+        return result
     except requests.exceptions.RequestException as e:
         return {"error": str(e), "success": 0}
     except Exception as e:

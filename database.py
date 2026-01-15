@@ -67,6 +67,25 @@ def init_db():
             cursor.execute("ALTER TABLE users ADD COLUMN is_blocked BOOLEAN DEFAULT 0")
         except sqlite3.OperationalError:
             pass
+        
+        # Таблица отслеживания API-запросов
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_name TEXT UNIQUE,
+                total_limit INTEGER DEFAULT 500000,
+                used_count INTEGER DEFAULT 0,
+                alert_threshold INTEGER DEFAULT 5000,
+                reset_date TEXT,
+                last_updated TEXT,
+                last_alert_sent TEXT
+            )
+        """)
+        # Инициализация записи для zachestnyibiznes если не существует
+        cursor.execute("""
+            INSERT OR IGNORE INTO api_usage (service_name, total_limit, alert_threshold, reset_date)
+            VALUES ('zachestnyibiznes', 500000, 5000, DATE('now', '+1 year'))
+        """)
         conn.commit()
 
 
@@ -265,3 +284,115 @@ def log_broadcast(message_text: str, total: int, success: int, failed: int):
         )
         conn.commit()
 
+
+# === Отслеживание API-запросов ===
+
+def increment_api_usage(service_name: str = "zachestnyibiznes", count: int = 1) -> dict:
+    """
+    Увеличивает счётчик использования API.
+    Возвращает информацию о текущем состоянии и нужно ли отправлять алерт.
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """UPDATE api_usage 
+               SET used_count = used_count + ?, last_updated = ?
+               WHERE service_name = ?""",
+            (count, datetime.now().isoformat(), service_name)
+        )
+        conn.commit()
+        
+        # Получаем текущее состояние
+        cursor.execute(
+            """SELECT total_limit, used_count, alert_threshold, last_alert_sent 
+               FROM api_usage WHERE service_name = ?""",
+            (service_name,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"remaining": 0, "should_alert": False}
+        
+        total_limit, used_count, alert_threshold, last_alert_sent = row
+        remaining = total_limit - used_count
+        
+        # Проверяем нужно ли отправить алерт
+        should_alert = False
+        if remaining <= alert_threshold:
+            # Отправляем алерт только раз в день
+            today = datetime.now().strftime("%Y-%m-%d")
+            if last_alert_sent != today:
+                should_alert = True
+                cursor.execute(
+                    "UPDATE api_usage SET last_alert_sent = ? WHERE service_name = ?",
+                    (today, service_name)
+                )
+                conn.commit()
+        
+        return {
+            "total_limit": total_limit,
+            "used_count": used_count,
+            "remaining": remaining,
+            "should_alert": should_alert,
+            "alert_threshold": alert_threshold
+        }
+
+
+def get_api_usage(service_name: str = "zachestnyibiznes") -> dict:
+    """Получает текущую статистику использования API."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT total_limit, used_count, alert_threshold, reset_date, last_updated
+               FROM api_usage WHERE service_name = ?""",
+            (service_name,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        
+        total_limit, used_count, alert_threshold, reset_date, last_updated = row
+        return {
+            "service_name": service_name,
+            "total_limit": total_limit,
+            "used_count": used_count,
+            "remaining": total_limit - used_count,
+            "alert_threshold": alert_threshold,
+            "reset_date": reset_date,
+            "last_updated": last_updated,
+            "usage_percent": round((used_count / total_limit) * 100, 1) if total_limit > 0 else 0
+        }
+
+
+def reset_api_usage(service_name: str = "zachestnyibiznes", new_limit: int = None):
+    """Сбрасывает счётчик использования API (при обновлении тарифа)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        if new_limit:
+            cursor.execute(
+                """UPDATE api_usage 
+                   SET used_count = 0, total_limit = ?, last_alert_sent = NULL,
+                       reset_date = DATE('now', '+1 year'), last_updated = ?
+                   WHERE service_name = ?""",
+                (new_limit, datetime.now().isoformat(), service_name)
+            )
+        else:
+            cursor.execute(
+                """UPDATE api_usage 
+                   SET used_count = 0, last_alert_sent = NULL, last_updated = ?
+                   WHERE service_name = ?""",
+                (datetime.now().isoformat(), service_name)
+            )
+        conn.commit()
+
+
+def set_api_limit(service_name: str, total_limit: int, alert_threshold: int = 5000):
+    """Устанавливает лимит и порог оповещения для API."""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """UPDATE api_usage 
+               SET total_limit = ?, alert_threshold = ?, last_updated = ?
+               WHERE service_name = ?""",
+            (total_limit, alert_threshold, datetime.now().isoformat(), service_name)
+        )
+        conn.commit()
